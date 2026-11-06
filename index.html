@@ -186,7 +186,7 @@ nav.tabs button[aria-selected="true"]{background:color-mix(in srgb, var(--accent
 .calhead h3{font-size:22px;justify-content:center}
 .cal{display:grid;grid-template-columns:repeat(7,1fr);gap:5px}
 .cal .dow{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);text-align:center;padding-bottom:4px;font-weight:800}
-.cal button{aspect-ratio:1;max-width:100%;border:2px solid transparent;border-radius:50%;background:var(--sunken);display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;padding:0;font-size:14px;font-weight:800;line-height:1.1}
+.cal button{position:relative;aspect-ratio:1;max-width:100%;border:2px solid transparent;border-radius:50%;background:var(--sunken);display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;padding:0;font-size:14px;font-weight:800;line-height:1.1}
 .cal button small{font-size:9px;font-weight:700;color:var(--muted)}
 .cal button.out{opacity:.35}
 .cal button.today{border-color:var(--accent)}
@@ -199,6 +199,13 @@ nav.tabs button[aria-selected="true"]{background:color-mix(in srgb, var(--accent
 .legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;font-weight:700;color:var(--muted)}
 .legend span{display:flex;align-items:center;gap:6px}
 .legend i{width:12px;height:12px;border-radius:50%;display:inline-block}
+.cal button.has-note::after{content:"";position:absolute;top:4px;right:4px;width:8px;height:8px;border-radius:50%;background:var(--gold);box-shadow:0 0 0 2px var(--surface)}
+.notebox{display:flex;flex-direction:column;gap:6px}
+.notebox textarea{width:100%;box-sizing:border-box;min-height:70px;border-radius:14px;border:2px solid var(--line);background:var(--surface);color:var(--ink);font:inherit;font-size:14px;padding:10px 12px;resize:vertical}
+.notebox textarea:focus{outline:none;border-color:var(--accent)}
+.notes-list{display:flex;flex-direction:column;gap:8px}
+.notes-list .nt{background:var(--sunken);border-radius:16px;padding:10px 14px;display:flex;flex-direction:column;gap:4px;font-size:14px;text-align:left;border:0;cursor:pointer;color:var(--ink);font-family:inherit}
+.notes-list .nt b{font-size:13px;color:var(--accent)}
 .daydetail{background:var(--sunken);border-radius:18px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;font-size:14px}
 
 /* history */
@@ -425,7 +432,7 @@ nav.tabs button[aria-selected="true"]{background:color-mix(in srgb, var(--accent
 const H = 3600e3, D = 24 * H;
 const KEY = "habbits-queen-v1";
 const TYPE = { haid: "Haid", nifas: "Nifas", istihadhah: "Istihadhah", suci: "Suci" };
-let state = { entries: [], settings: { qadhaPaid: 0, qadhaExtra: 0 }, habits: {}, dzikir: {} };
+let state = { entries: [], settings: { qadhaPaid: 0, qadhaExtra: 0 }, habits: {}, dzikir: {}, notes: {} };
 let docRef = null, ui = { tab: "today", month: null, sel: null, editId: null, confirmDel: null, tip: null };
 
 /* ---------- storage ---------- */
@@ -435,7 +442,8 @@ try { const t = localStorage.getItem(KEY + "-tab"); if (t) ui.tab = t; } catch (
 function normalize(s) {
   return { entries: Array.isArray(s?.entries) ? s.entries.filter(e => e && e.start && TYPE[e.type]) : [],
            settings: { qadhaPaid: +s?.settings?.qadhaPaid || 0, qadhaExtra: +s?.settings?.qadhaExtra || 0 },
-           habits: s?.habits && typeof s.habits === "object" ? s.habits : {}, dzikir: s?.dzikir && typeof s.dzikir === "object" ? s.dzikir : {} };
+           habits: s?.habits && typeof s.habits === "object" ? s.habits : {}, dzikir: s?.dzikir && typeof s.dzikir === "object" ? s.dzikir : {},
+           notes: s?.notes && typeof s.notes === "object" ? Object.fromEntries(Object.entries(s.notes).filter(([k, v]) => typeof v === "string" && v.trim())) : {} };
 }
 let chain = Promise.resolve();
 function persist() {
@@ -760,8 +768,8 @@ function renderCal(C) {
     if (i >= 35 && d.getMonth() !== m.getMonth()) break;
     const t = dayType(C.segs, d);
     let hd = ""; try { hd = hijriDay ? hijriDay.format(d) : ""; } catch (e) {}
-    const cls = [d.getMonth() !== m.getMonth() ? "out" : "", d.toDateString() === now.toDateString() ? "today" : "", ui.sel === d.toDateString() ? "sel" : "", !t && predDays.has(d.toDateString()) ? "pred" : ""].join(" ");
-    cells += `<button class="${cls}" ${t ? `data-t="${t}"` : ""} data-act="day" data-day="${+d}" aria-label="${fmtDate(d)}${t ? ", " + TYPE[t] : ""}">${d.getDate()}<small>${esc(hd)}</small></button>`;
+    const cls = [d.getMonth() !== m.getMonth() ? "out" : "", d.toDateString() === now.toDateString() ? "today" : "", ui.sel === d.toDateString() ? "sel" : "", !t && predDays.has(d.toDateString()) ? "pred" : "", state.notes[dkey(d)] ? "has-note" : ""].join(" ");
+    cells += `<button class="${cls}" ${t ? `data-t="${t}"` : ""} data-act="day" data-day="${+d}" aria-label="${fmtDate(d)}${t ? ", " + TYPE[t] : ""}${state.notes[dkey(d)] ? ", ada keterangan" : ""}">${d.getDate()}<small>${esc(hd)}</small></button>`;
   }
   const h1 = hijri(first).replace(/^\d+\s/, ""), h2 = hijri(new Date(m.getFullYear(), m.getMonth() + 1, 0)).replace(/^\d+\s/, "");
   let detail = "";
@@ -769,22 +777,32 @@ function renderCal(C) {
     const d = new Date(ui.sel), t = dayType(C.segs, d);
     detail = `<div class="daydetail"><b>${fmtDate(d)}</b><span class="sub">${esc(hijri(d))}</span>
       <span>${t ? `<span class="chip t-${t}">${TYPE[t]}</span>` : predDays.has(ui.sel) ? `<span class="chip t-haid">Perkiraan haid</span>` : "Tidak ada catatan darah"}</span>
-      <div class="actions"><button class="btn sm primary" data-act="new" data-type="haid" data-at="${+d}">Catat darah mulai tanggal ini</button></div></div>`;
+      <div class="notebox"><label for="day-note" style="font-weight:800">Keterangan tanggal ini</label>
+        <textarea id="day-note" maxlength="500" placeholder="Tulis apa saja, misal: keluar flek, perut kram, mulai minum obat, atau cerita hari ini">${esc(state.notes[dkey(d)] || "")}</textarea>
+        <div class="actions"><button class="btn sm primary" data-act="note-save" data-day="${+d}">Simpan keterangan</button>${state.notes[dkey(d)] ? `<button class="btn sm ghost" data-act="note-del" data-day="${+d}">Hapus keterangan</button>` : ""}${ui.noteMsg && ui.noteMsg.k === dkey(d) ? `<span class="sub" role="status" style="align-self:center;color:var(--suci);font-weight:800">${ui.noteMsg.t}</span>` : ""}</div></div>
+      <div class="actions"><button class="btn sm" data-act="new" data-type="haid" data-at="${+d}">Catat darah mulai tanggal ini</button></div></div>`;
   }
   $("v-cal").innerHTML = `<div class="card">
     <div class="calhead"><button class="btn sm" data-act="mon" data-d="-1" aria-label="Bulan sebelumnya">‹</button>
       <div style="text-align:center"><h3>${m.toLocaleDateString("id-ID", { month: "long", year: "numeric" })}</h3><span class="sub">${esc(h1 === h2 ? h1 : h1 + " – " + h2)}</span></div>
       <button class="btn sm" data-act="mon" data-d="1" aria-label="Bulan berikutnya">›</button></div>
     <div class="cal tnum">${cells}</div>
-    <div class="legend"><span><i style="background:var(--haid)"></i>Haid</span><span><i style="background:var(--nifas)"></i>Nifas</span><span><i style="background:var(--istihadhah)"></i>Istihadhah</span><span><i style="border:2px dashed var(--haid)"></i>Perkiraan haid</span></div>
+    <div class="legend"><span><i style="background:var(--haid)"></i>Haid</span><span><i style="background:var(--nifas)"></i>Nifas</span><span><i style="background:var(--istihadhah)"></i>Istihadhah</span><span><i style="border:2px dashed var(--haid)"></i>Perkiraan haid</span><span><i style="background:var(--gold)"></i>Ada keterangan</span></div>
     ${detail}</div>`;
 }
 
+function notesHTML() {
+  const ks = Object.keys(state.notes).sort().reverse();
+  if (!ks.length) return "";
+  return `<div class="card" style="margin-top:14px"><div class="card-head"><h3>Keterangan harian</h3><span class="sub">${ks.length} tanggal</span></div><div class="notes-list">${ks.map(k => {
+    const [y, mo, da] = k.split("-").map(Number), d = new Date(y, mo - 1, da);
+    return `<button class="nt" data-act="note-open" data-day="${+d}"><b>${fmtDate(d)}</b><span>${esc(state.notes[k])}</span></button>`; }).join("")}</div></div>`;
+}
 function renderHist(C) {
   const list = [...C.es].reverse();
   if (!list.length) {
     $("v-hist").innerHTML = `<div class="card empty"><div class="big"><svg viewBox="0 0 48 48" width="44" height="44">${ICON.book.replace(/^<svg[^>]*>|<\/svg>$/g, "")}</svg></div><h3>Riwayatmu masih kosong</h3><p>Setiap catatan haid, nifas, dan istihadhah akan muncul di sini, lengkap dengan hukumnya.</p>
-      <button class="btn primary" data-act="new" data-type="haid">Tambah catatan pertama</button></div>`;
+      <button class="btn primary" data-act="new" data-type="haid">Tambah catatan pertama</button></div>${notesHTML()}`;
     return;
   }
   $("v-hist").innerHTML = `<div class="actions" style="margin-bottom:12px"><button class="btn primary" data-act="new" data-type="haid">+ Tambah catatan lama</button></div><div class="hist">${list.map(e => {
@@ -799,7 +817,7 @@ function renderHist(C) {
       <div class="actions">${ui.confirmDel === e.id
         ? `<span class="sub" style="align-self:center">Hapus catatan ini?</span><button class="btn sm danger" data-act="del-yes" data-id="${e.id}">Ya, hapus</button><button class="btn sm" data-act="del-no">Batal</button>`
         : `<button class="btn sm" data-act="edit" data-id="${e.id}">Ubah</button><button class="btn sm ghost" data-act="del" data-id="${e.id}">Hapus</button>`}</div>
-    </article>`; }).join("")}</div>`;
+    </article>`; }).join("")}</div>${notesHTML()}`;
 }
 
 function renderGuide() {
@@ -1078,7 +1096,13 @@ document.addEventListener("click", e => {
   else if (act === "go") { ui.tab = b.dataset.tab; render(); window.scrollTo({ top: 0 }); }
   else if (act === "tip") { ui.tip = (ui.tip + 1) % TIPS.length; render(); }
   else if (act === "mon") { ui.month = new Date(ui.month.getFullYear(), ui.month.getMonth() + +b.dataset.d, 1); render(); }
-  else if (act === "day") { const k = new Date(+b.dataset.day).toDateString(); ui.sel = ui.sel === k ? null : k; render(); }
+  else if (act === "note-save" || act === "note-del") {
+    const k = dkey(new Date(+b.dataset.day)), v = act === "note-save" ? ($("day-note")?.value || "").trim() : "";
+    const n = { ...state.notes }; if (v) n[k] = v.slice(0, 500); else delete n[k];
+    state.notes = n; ui.noteMsg = { k, t: v ? "✓ Keterangan tersimpan" : "Keterangan dihapus" }; persist();
+  }
+  else if (act === "note-open") { const d = new Date(+b.dataset.day); ui.month = new Date(d.getFullYear(), d.getMonth(), 1); ui.sel = d.toDateString(); ui.tab = "cal"; render(); window.scrollTo({ top: 0 }); }
+  else if (act === "day") { const k = new Date(+b.dataset.day).toDateString(); ui.sel = ui.sel === k ? null : k; ui.noteMsg = null; render(); }
 });
 /* ---------- theme ---------- */
 document.querySelectorAll("[data-theme-slot]").forEach(s => s.replaceWith($("theme-tpl").content.cloneNode(true)));
